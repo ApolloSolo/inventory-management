@@ -4,6 +4,7 @@ const PORT = process.env.PORT || 5000;
 const db = require("./config/connection");
 const bodyParser = require("body-parser");
 const cors = require("cors");
+const errorHandler = require("./middleware/handleErrors");
 
 const app = express();
 
@@ -12,6 +13,9 @@ app.use(express.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 
 app.use(require("./routes"));
+
+//Error Middleware
+app.use(errorHandler);
 
 db.once("open", () => {
   app.listen(PORT, () => {
