@@ -1,5 +1,7 @@
 const { User } = require("../models/index");
+const generateToken = require("../util/generateToken");
 const jwt = require("jsonwebtoken");
+const bcrypt = require("bcrypt");
 
 const getUsers = async (req, res) => {
   try {
@@ -59,17 +61,28 @@ const registerUser = async (req, res) => {
 
     const newUser = await User.create(req.body);
 
-    if (newUser) {
-      res.status(201).json({
-        _id: newUser.id,
-        username: newUser.username,
-        password: newUser.password,
-        token: await generateToken(newUser),
-      });
-    } else {
+    if (!newUser) {
       res.status(400);
       throw new Error("Invalid user data");
     }
+
+    const token = await generateToken(newUser);
+
+    // Send HTTP-only cookie
+    res.cookie("token", token, {
+      path: "/",
+      httpOnly: true, // Flags the cookie to be used by the web server
+      expires: new Date(Date.now() + 1000 * 86400), // expires in one day
+      sameSite: "none",
+      secure: true, // Flags the cookie to be used by https only
+    });
+
+    res.status(201).json({
+      _id: newUser.id,
+      username: newUser.username,
+      password: newUser.password,
+      token,
+    });
   } catch (error) {
     res.json({
       error: error.message,
@@ -99,11 +112,21 @@ const loginUser = async (req, res) => {
       throw new Error("Incorrect credentials");
     }
 
+    const token = await generateToken(foundUser);
+    // Send HTTP-only cookie
+    res.cookie("token", token, {
+      path: "/",
+      httpOnly: true, // Flags the cookie to be used by the web server
+      expires: new Date(Date.now() + 1000 * 86400), // expires in one day
+      sameSite: "none",
+      secure: true, // Flags the cookie to be used by https only
+    });
+
     res.status(201).json({
       _id: foundUser.id,
       username: foundUser.username,
       email: foundUser.email,
-      token: await generateToken(foundUser),
+      token,
     });
   } catch (error) {
     res.json({
@@ -112,24 +135,74 @@ const loginUser = async (req, res) => {
   }
 };
 
-async function logoutUser (req, res) {
-  res.send("Logged out!")
+async function logoutUser(req, res) {
+  try {
+    res.cookie("token", "", {
+      path: "/",
+      httpOnly: true,
+      expires: new Date(0), // expires now
+      sameSite: "none",
+      secure: true,
+    });
+    return res.status(200).json({ message: "Logged out" });
+  } catch (error) {
+    res.json({
+      error: error.message,
+    });
+  }
 }
 
 async function updateUser(req, res) {
   try {
-    const { userId } = req.params;
+    const { _id } = req.user._id;
     const body = req.body;
 
-    const userUpdate = await User.findByIdAndUpdate(userId, body, {
+    const updatedUser = await User.findByIdAndUpdate(_id, body, {
       new: true,
     }).select("-__v -password");
 
-    if (!userUpdate) {
+    if (!updatedUser) {
       throw new Error("User could not be found");
     }
 
-    res.send(userUpdate);
+    res.send(updatedUser);
+  } catch (error) {
+    res.json({
+      error: error.message,
+    });
+  }
+}
+
+async function changePassword(req, res) {
+  try {
+    const user = await User.findById(req.user._id).select("-__v");
+    if (!user) {
+      res.status(400);
+      throw new Error("User not found");
+    }
+
+    const { oldPassword, newPassword, confirmPassword } = req.body;
+
+    if (!oldPassword || !newPassword || !confirmPassword) {
+      res.status(400);
+      throw new Error("Please fill in all fields");
+    }
+
+    if (newPassword !== confirmPassword) {
+      res.status(400);
+      throw new Error("Passwords don't match");
+    }
+
+    const passwordIsCorrect = await bcrypt.compare(oldPassword, user.password);
+
+    if (!passwordIsCorrect) {
+      res.status(400);
+      throw new Error("Current password is incorrect");
+    }
+
+    user.password = newPassword;
+    await user.save();
+    res.status(200).json({ message: "Changed password" });
   } catch (error) {
     res.json({
       error: error.message,
@@ -156,11 +229,17 @@ async function deleteUser(req, res) {
   }
 }
 
-async function generateToken({ username, _id }) {
-  const payload = { username, _id };
-  return jwt.sign({ data: payload }, process.env.JWT_SECRET, {
-    expiresIn: "12hr",
-  });
+async function loginStatus(req, res) {
+  const token = req.cookies.token;
+  if (!token) {
+    return res.json(false);
+  }
+
+  const varified = jwt.verify(token, process.env.JWT_SECRET);
+  if (varified) {
+    return res.json(true);
+  }
+  return res.json(false);
 }
 
 module.exports = {
@@ -171,5 +250,7 @@ module.exports = {
   loginUser,
   logoutUser,
   updateUser,
+  changePassword,
   deleteUser,
+  loginStatus,
 };
