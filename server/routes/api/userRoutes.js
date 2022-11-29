@@ -15,7 +15,7 @@ const {
 } = require("../../controllers/userControllers");
 const protected = require("../../middleware/authMiddleware");
 
-router.get("/", protected, getUsers);
+router.get("/", getUsers);
 router.get("/me", protected, getMe);
 router.get("/logstatus", protected, loginStatus);
 router.get("/:userId", protected, getOneUser);
